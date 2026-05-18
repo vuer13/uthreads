@@ -5,14 +5,14 @@
 void *worker(void *arg) {
     char *name = arg;
 
-    printf("worker %s started\n", name);
-
-    printf("worker %s yielding once\n", name);
-    uthread_yield();
+    for (int i = 0; i < 3; i++) {
+        printf("worker %s: %d\n", name, i);
+        uthread_yield();
+    }
 
     printf("worker %s finished\n", name);
 
-    return NULL;
+    return "done";
 }
 
 int main(void) {
@@ -24,20 +24,14 @@ int main(void) {
     uthread_create(&t1, worker, "A");
     uthread_create(&t2, worker, "B");
 
-    printf("main yield 1\n");
-    uthread_yield();
+    void *ret1;
+    void *ret2;
 
-    printf("main yield 2\n");
-    uthread_yield();
+    uthread_join(t1, &ret1);
+    uthread_join(t2, &ret2);
 
-    printf("main yield 3\n");
-    uthread_yield();
-
-    printf("main yield 4\n");
-    uthread_yield();
-
-    printf("main yield 5\n");
-    uthread_yield();
+    printf("t1 returned: %s\n", (char *)ret1);
+    printf("t2 returned: %s\n", (char *)ret2);
 
     printf("main done\n");
 

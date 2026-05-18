@@ -188,8 +188,75 @@ int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
     return 0;
 }
 
+static void free_thread(int id) {
+    if (id == MAIN_THREAD_ID) {
+        return; // Don't free main thread
+    }
+
+    free(thread_table[id].stack);
+
+    // reset table slot so it can be reused
+    memset(&thread_table[id], 0, sizeof(thread_table[id]));
+    thread_table[id].id = id;
+    thread_table[id].state = THREAD_UNUSED;
+    thread_table[id].joiner = -1;
+}
+
 int uthread_join(uthread_t thread, void **retval) {
-    // TODO
+    if (!initialized || thread <= 0 || thread >= MAX_THREADS) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Thread cannot join itself
+    if(thread == current_thread_id) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Must join a thread that exists
+    if (thread_table[thread].state == THREAD_UNUSED) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Thread cannot join a thread that is already detached
+    if (thread_table[thread].detached) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Only one thread can join target thread
+    if (thread_table[thread].joiner != -1 && thread_table[thread].joiner != current_thread_id) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    while (thread_table[thread].state != THREAD_FINISHED) {
+        int prev = current_thread_id;
+
+        // Prev is now waiting for thread to finish, block it
+        thread_table[thread].joiner = prev;
+        int next = dequeue();
+
+        if (next == -1) {
+            errno = EDEADLK;
+            return -1;
+        }
+
+        thread_table[prev].state = THREAD_BLOCKED;
+
+        // Run next thread
+        current_thread_id = next;
+        thread_table[next].state = THREAD_RUNNING;
+        swapcontext(&thread_table[prev].context, &thread_table[next].context);
+    }
+
+    if (retval != NULL) {
+        *retval = thread_table[thread].retval; // Return thread's return value to caller
+    }
+
+    free_thread(thread); // Clean up thread resources
     return 0;
 }
 
@@ -202,6 +269,14 @@ void uthread_exit(void *retval) {
     thread_table[id].retval = retval;
     thread_table[id].state = THREAD_FINISHED;
     int next = dequeue();
+
+    // If another thread is blocked waiting to join this one, wake that thread up by
+    // putting it in the ready queue
+    int joiner = thread_table[id].joiner;
+    if (joiner != -1 && thread_table[joiner].state == THREAD_BLOCKED) {
+        thread_table[joiner].state = THREAD_READY;
+        enqueue(joiner);
+    }
 
     if (next == -1) {
         exit(0); // No other threads ready, just exit process
