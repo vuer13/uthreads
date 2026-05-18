@@ -22,7 +22,7 @@ typedef enum {
     THREAD_READY,
     THREAD_RUNNING,
     THREAD_BLOCKED,
-    THREAD_TERMINATED
+    THREAD_FINISHED
 } thread_state_t;
 
 // TCB - Thread Control Block: all information to manage a thread
@@ -87,7 +87,7 @@ static int dequeue(void) {
 }
 
 static int find_free_thread_slot(void) {
-    for (int i = 0; i < MAX_THREADS; i++) {
+    for (int i = 1; i < MAX_THREADS; i++) {
         if (thread_table[i].state == THREAD_UNUSED) {
             return i;
         }
@@ -194,7 +194,28 @@ int uthread_join(uthread_t thread, void **retval) {
 }
 
 void uthread_exit(void *retval) {
-    // TODO
+    if (!initialized) {
+        exit(0); // If library not initialized, just exit process
+    }
+
+    int id = current_thread_id;
+    thread_table[id].retval = retval;
+    thread_table[id].state = THREAD_FINISHED;
+    int next = dequeue();
+
+    if (next == -1) {
+        exit(0); // No other threads ready, just exit process
+    }
+
+    // Set next thread up to run
+    current_thread_id = next;
+    thread_table[next].state = THREAD_RUNNING;
+
+    // Switch to next thread context
+    setcontext(&thread_table[next].context);
+
+    // Don't return setcontext
+    abort();
 }
 
 void uthread_detach(uthread_t thread) {
@@ -202,5 +223,28 @@ void uthread_detach(uthread_t thread) {
 }
 
 void uthread_yield(void) {
-    // TODO
+    // Nothing to do if library has not been initialized
+    if (!initialized) {
+        return;
+    } 
+
+    // Run current thread if no other threads are ready
+    if (ready_queue_empty()) {
+        return;
+    }
+
+    int prev = current_thread_id;
+    int next = dequeue();
+
+    if (thread_table[prev].state == THREAD_RUNNING) {
+        thread_table[prev].state = THREAD_READY;
+        enqueue(prev); // Put current thread back in ready queue
+    }
+
+    current_thread_id = next;
+    thread_table[next].state = THREAD_RUNNING;
+
+    // Save current thread context and switch to next thread context
+    // When prev gets scheduled again, execution resumes after this call
+    swapcontext(&thread_table[prev].context, &thread_table[next].context);
 }
