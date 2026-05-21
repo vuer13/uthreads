@@ -11,7 +11,6 @@ void *worker(void *arg) {
     }
 
     printf("worker %s finished\n", name);
-
     return "done";
 }
 
@@ -32,8 +31,6 @@ int main(void) {
 
     printf("t1 returned: %s\n", (char *)ret1);
     printf("t2 returned: %s\n", (char *)ret2);
-
-    printf("main done\n");
 
     return 0;
 }
