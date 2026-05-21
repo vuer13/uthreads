@@ -102,6 +102,29 @@ static void thread_trampoline(int id) {
     uthread_exit(result);
 }
 
+static void free_thread(int id) {
+    if (id == MAIN_THREAD_ID) {
+        return; // Don't free main thread
+    }
+
+    free(thread_table[id].stack);
+
+    // reset table slot so it can be reused
+    memset(&thread_table[id], 0, sizeof(thread_table[id]));
+    thread_table[id].id = id;
+    thread_table[id].state = THREAD_UNUSED;
+    thread_table[id].joiner = -1;
+}
+
+static void reap_detached_finished_threads(void) {
+    // Clean up detached threads already finished from another thread
+    for (int i = 1; i < MAX_THREADS; i++) {
+        if (thread_table[i].stack == THREAD_FINISHED && thread_table[i].detached) {
+            free_thread(i);
+        }
+    }
+}
+
 int uthread_init(size_t stack_sz) {
     if (initialized) {
         return 0; // Already initialized
@@ -136,6 +159,8 @@ int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
             return -1; // Failed to initialize
         }
     }
+
+    reap_detached_finished_threads();
     
     if (thread == NULL || func == NULL) {
         errno = EINVAL;
@@ -186,20 +211,6 @@ int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
     *thread = id; // Return thread ID to caller
 
     return 0;
-}
-
-static void free_thread(int id) {
-    if (id == MAIN_THREAD_ID) {
-        return; // Don't free main thread
-    }
-
-    free(thread_table[id].stack);
-
-    // reset table slot so it can be reused
-    memset(&thread_table[id], 0, sizeof(thread_table[id]));
-    thread_table[id].id = id;
-    thread_table[id].state = THREAD_UNUSED;
-    thread_table[id].joiner = -1;
 }
 
 int uthread_join(uthread_t thread, void **retval) {
@@ -294,7 +305,16 @@ void uthread_exit(void *retval) {
 }
 
 void uthread_detach(uthread_t thread) {
-    // TODO
+    if (!initialized || thread <= 0 || thread >= MAX_THREADS) {
+        return;
+    }
+    // Cannot detach thread that doesn't exist
+    if (thread_table[thread].state == THREAD_UNUSED) {
+        return;
+    }
+
+    thread_table[thread].detached = 1;
+    reap_detached_finished_threads();
 }
 
 void uthread_yield(void) {
@@ -302,6 +322,9 @@ void uthread_yield(void) {
     if (!initialized) {
         return;
     } 
+
+    // Clean up
+    reap_detached_finished_threads();
 
     // Run current thread if no other threads are ready
     if (ready_queue_empty()) {
