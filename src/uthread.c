@@ -16,6 +16,9 @@
 // Default stack size for newly created uthreads
 #define DEFAULT_STACK_SIZE (64 * 1024) // 64 KB
 
+#define MIN_PRIORITY 0
+#define MAX_PRIORITY 9
+
 // Internal states for threads
 typedef enum {
     THREAD_UNUSED = 0,
@@ -38,6 +41,7 @@ typedef struct {
 
     void *retval;               // Return value from the thread function
 
+    int priority;               // Thread priority
     int detached;                // Flag indicating if the thread is detached
     int joiner;                  // ID of thread waiting for this thread to finish
 
@@ -153,7 +157,7 @@ int uthread_init(size_t stack_sz) {
     return 0;
 }
 
-int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
+int uthread_create(uthread_t *thread, void *(*func)(void *), void *args, int priority) {
     if (!initialized) {
         if (uthread_init(DEFAULT_STACK_SIZE) == -1) {
             return -1; // Failed to initialize
@@ -165,6 +169,12 @@ int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
     if (thread == NULL || func == NULL) {
         errno = EINVAL;
         return -1; // Invalid arguments
+    }
+
+    // Check validity of priority
+    if (priority < MIN_PRIORITY || priority > MAX_PRIORITY) {
+        errno = EINVAL;
+        return -1;
     }
 
     int id = find_free_thread_slot();
@@ -192,6 +202,7 @@ int uthread_create(uthread_t *thread, void *(*func)(void *), void *args) {
     thread_table[id].func = func;
     thread_table[id].args = args;
     thread_table[id].retval = NULL;
+    thread_table[id].priority = priority;
 
     thread_table[id].detached = 0;
     thread_table[id].joiner = -1;

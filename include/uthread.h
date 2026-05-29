@@ -14,7 +14,7 @@ int uthread_init(size_t stack_sz);
 // thread: output parameter for thread ID to be stored
 // func: function to run
 // args: arguments for function
-int uthread_create(uthread_t *thread, void *(*func)(void *), void *args);
+int uthread_create(uthread_t *thread, void *(*func)(void *), void *args, int priority);
 
 // Wait for another thread to finish
 // retval: if not NULL, will store the return value of the thread

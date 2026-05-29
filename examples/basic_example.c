@@ -20,8 +20,8 @@ int main(void) {
     uthread_t t1;
     uthread_t t2;
 
-    uthread_create(&t1, worker, "A");
-    uthread_create(&t2, worker, "B");
+    uthread_create(&t1, worker, "A", 1);
+    uthread_create(&t2, worker, "B", 5);
 
     void *ret1;
     void *ret2;
