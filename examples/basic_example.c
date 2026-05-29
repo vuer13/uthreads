@@ -17,20 +17,20 @@ void *worker(void *arg) {
 int main(void) {
     uthread_init(64 * 1024);
 
-    uthread_t t1;
-    uthread_t t2;
+    uthread_t low;
+    uthread_t high;
 
-    uthread_create(&t1, worker, "A", 1);
-    uthread_create(&t2, worker, "B", 5);
+    uthread_create(&low, worker, "LOW", 1);
+    uthread_create(&high, worker, "HIGH", 9);
 
-    void *ret1;
-    void *ret2;
+    void *ret_low;
+    void *ret_high;
 
-    uthread_join(t1, &ret1);
-    uthread_join(t2, &ret2);
+    uthread_join(low, &ret_low);
+    uthread_join(high, &ret_high);
 
-    printf("t1 returned: %s\n", (char *)ret1);
-    printf("t2 returned: %s\n", (char *)ret2);
+    printf("low returned: %s\n", (char *)ret_low);
+    printf("high returned: %s\n", (char *)ret_high);
 
     return 0;
 }

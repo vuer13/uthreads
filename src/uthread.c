@@ -58,36 +58,72 @@ static size_t thread_stack_size = DEFAULT_STACK_SIZE;
 // Flag for when library is initialized
 static int initialized = 0;
 
-// FIFO ready queue for scheduling threads
-static int ready_queue[MAX_THREADS];
-static int ready_queue_head = 0;
-static int ready_queue_tail = 0;
-static int ready_queue_count = 0;
+/*
+ * Priority ready queue.
+ *
+ * Instead of one queue, we have one queue per priority.
+ *
+ * Priority 0 = lowest
+ * Priority 9 = highest
+ *
+ * Each priority level is still FIFO internally.
+ */
+static int ready_queue[MAX_PRIORITY + 1][MAX_THREADS];
+static int ready_queue_head[MAX_PRIORITY + 1];
+static int ready_queue_tail[MAX_PRIORITY + 1];
+static int ready_queue_count[MAX_PRIORITY + 1];
+
+/*
+ * Total number of ready threads across all priority levels.
+ */
+static int total_ready_count = 0;
 
 static int ready_queue_empty(void) {
-    return ready_queue_count == 0;
+    return total_ready_count == 0;
 }
 
 static void enqueue(int id) {
-    if (ready_queue_count >= MAX_THREADS) {
-        abort(); // Should never happen
+    int priority = thread_table[id].priority;
+
+    if (priority < MIN_PRIORITY || priority > MAX_PRIORITY) {
+        abort();
     }
 
-    ready_queue[ready_queue_tail] = id;
-    ready_queue_tail = (ready_queue_tail + 1) % MAX_THREADS;
-    ready_queue_count++;
+    if (ready_queue_count[priority] >= MAX_THREADS) {
+        abort();
+    }
+
+    // Add this thread to the back of its priority queue.
+    ready_queue[priority][ready_queue_tail[priority]] = id;
+
+    ready_queue_tail[priority] =
+        (ready_queue_tail[priority] + 1) % MAX_THREADS;
+
+    ready_queue_count[priority]++;
+    total_ready_count++;
 }
 
 static int dequeue(void) {
     if (ready_queue_empty()) {
-        return -1; // No threads ready
+        return -1;
     }
 
-    int id = ready_queue[ready_queue_head];
-    ready_queue_head = (ready_queue_head + 1) % MAX_THREADS;
-    ready_queue_count--;
+    // Search from highest priority to lowest priority.
+    for (int priority = MAX_PRIORITY; priority >= MIN_PRIORITY; priority--) {
+        if (ready_queue_count[priority] > 0) {
+            int id = ready_queue[priority][ready_queue_head[priority]];
 
-    return id;
+            ready_queue_head[priority] =
+                (ready_queue_head[priority] + 1) % MAX_THREADS;
+
+            ready_queue_count[priority]--;
+            total_ready_count--;
+
+            return id;
+        }
+    }
+
+    return -1;
 }
 
 static int find_free_thread_slot(void) {
@@ -123,7 +159,7 @@ static void free_thread(int id) {
 static void reap_detached_finished_threads(void) {
     // Clean up detached threads already finished from another thread
     for (int i = 1; i < MAX_THREADS; i++) {
-        if (thread_table[i].stack == THREAD_FINISHED && thread_table[i].detached) {
+        if (thread_table[i].state == THREAD_FINISHED && thread_table[i].detached) {
             free_thread(i);
         }
     }
@@ -138,7 +174,12 @@ int uthread_init(size_t stack_sz) {
     }
 
     // Clear thread table
-    memset(thread_table, 0, sizeof(thread_table));
+    memset(ready_queue, 0, sizeof(ready_queue));
+    memset(ready_queue_head, 0, sizeof(ready_queue_head));
+    memset(ready_queue_tail, 0, sizeof(ready_queue_tail));
+    memset(ready_queue_count, 0, sizeof(ready_queue_count));
+    total_ready_count = 0;
+
     // Initialize every thread table slot
     for (int i = 0; i < MAX_THREADS; i++) {
         thread_table[i].id = i;
@@ -151,6 +192,7 @@ int uthread_init(size_t stack_sz) {
     }
 
     thread_table[MAIN_THREAD_ID].state = THREAD_RUNNING;
+    thread_table[MAIN_THREAD_ID].priority = MIN_PRIORITY;
     current_thread_id = MAIN_THREAD_ID;
     initialized = 1;
 
@@ -290,7 +332,6 @@ void uthread_exit(void *retval) {
     int id = current_thread_id;
     thread_table[id].retval = retval;
     thread_table[id].state = THREAD_FINISHED;
-    int next = dequeue();
 
     // If another thread is blocked waiting to join this one, wake that thread up by
     // putting it in the ready queue
@@ -299,6 +340,8 @@ void uthread_exit(void *retval) {
         thread_table[joiner].state = THREAD_READY;
         enqueue(joiner);
     }
+
+    int next = dequeue();
 
     if (next == -1) {
         exit(0); // No other threads ready, just exit process
@@ -343,15 +386,23 @@ void uthread_yield(void) {
     }
 
     int prev = current_thread_id;
-    int next = dequeue();
 
+    // Put current thread back in ready queue first
+    // Scheduler can choose b/t current thread and all other ready threads
+    //  If current has highest priority, it may be selected again
     if (thread_table[prev].state == THREAD_RUNNING) {
         thread_table[prev].state = THREAD_READY;
-        enqueue(prev); // Put current thread back in ready queue
+        enqueue(prev);
     }
+
+    int next = dequeue();
 
     current_thread_id = next;
     thread_table[next].state = THREAD_RUNNING;
+
+    if (next == prev) {
+        return;
+    }
 
     // Save current thread context and switch to next thread context
     // When prev gets scheduled again, execution resumes after this call
